@@ -1,15 +1,16 @@
 package org.example;
 
-import com.authzed.api.materialize.v0.WatchPermissionsRequest;
-import com.authzed.api.materialize.v0.WatchPermissionsServiceGrpc;
 import com.authzed.api.v1.*;
 import com.authzed.grpcutil.BearerToken;
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContext;
 import javax.net.ssl.*;
 import java.security.KeyStore;
+import java.util.Iterator;
 
 
 public class Main {
@@ -23,39 +24,46 @@ public class Main {
                 .build();
 
         ManagedChannel channel = NettyChannelBuilder
-                .forTarget("url-here")
+                .forTarget("URL_HERE")
                 .sslContext(sslContext)
                 .build();
 
-        BearerToken bearerToken = new BearerToken("token-here");
-        WatchPermissionsServiceGrpc.WatchPermissionsServiceStub watchClient = WatchPermissionsServiceGrpc
-                .newStub(channel)
+        BearerToken bearerToken = new BearerToken("TOKEN_HERE");
+        WatchServiceGrpc.WatchServiceBlockingStub watchClient = WatchServiceGrpc
+                .newBlockingStub(channel)
                 .withCallCredentials(bearerToken);
 
-        try {
-            WatchPermissionsRequest request = WatchPermissionsRequest.newBuilder().build();
+        ZedToken lastZedToken = ZedToken.newBuilder().setToken("").build();
 
-            watchClient.watchPermissions(request, new io.grpc.stub.StreamObserver<>() {
-                @Override
-                public void onNext(com.authzed.api.materialize.v0.WatchPermissionsResponse response) {
-                    System.out.println("Received permission update: " + response);
+        while(true) {
+            try {
+                WatchRequest.Builder builder = WatchRequest.newBuilder();
+
+                if (!lastZedToken.getToken().isEmpty()) {
+                    builder.setOptionalStartCursor(lastZedToken);
                 }
 
-                @Override
-                public void onError(Throwable t) {
-                    System.out.println("Stream error: " + t.getMessage());
+                WatchRequest request = builder.build();
+
+                Iterator<WatchResponse> watchStream = watchClient.watch(request);
+
+                while (watchStream.hasNext()) {
+                    WatchResponse msg = watchStream.next();
+                    System.out.println("Received watch response: " + msg);
+
+                    if (!msg.getChangesThrough().getToken().isEmpty()) {
+                        lastZedToken = msg.getChangesThrough();
+                    }
                 }
 
-                @Override
-                public void onCompleted() {
-                    System.out.println("Stream completed");
+            } catch (Exception e) {
+                if (e instanceof StatusRuntimeException sre && sre.getStatus().getCode().equals(Status.UNAVAILABLE.getCode()) && sre.getMessage().contains("stream timeout")) {
+                    // Stream got disconnected after inactivity. Retry
+                } else {
+                    System.out.println("Error calling watch: " + e.getMessage());
+                    return;
                 }
-            });
-            
-            // Keep the main thread alive to receive streaming responses
-            Thread.sleep(30000);
-        } catch (Exception e) {
-            System.out.println("Failed to call watch: " + e.getMessage());
+            }
         }
     }
 }
