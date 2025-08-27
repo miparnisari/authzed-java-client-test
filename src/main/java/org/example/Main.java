@@ -3,14 +3,14 @@ package org.example;
 import com.authzed.api.v1.*;
 import com.authzed.grpcutil.BearerToken;
 import io.grpc.ManagedChannel;
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContext;
 import javax.net.ssl.*;
 import java.security.KeyStore;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 
 
 public class Main {
@@ -26,6 +26,26 @@ public class Main {
         ManagedChannel channel = NettyChannelBuilder
                 .forTarget("URL_HERE")
                 .sslContext(sslContext)
+                .disableServiceConfigLookUp()
+                .defaultServiceConfig(Map.of(
+                        "methodConfig", List.of(
+                                Map.of(
+                                        "name",  List.of(
+                                                Map.of(
+                                                        "service", "authzed.api.v1.WatchService",
+                                                        "method", "Watch"
+                                                )
+                                        ),
+                                        "retryPolicy", Map.of(
+                                                "maxAttempts", "5",
+                                                "initialBackoff", "1s",
+                                                "backoffMultiplier", "4.0",
+                                                "maxBackoff", "30s",
+                                                "retryableStatusCodes", List.of("UNAVAILABLE", "INTERNAL")
+                                        )
+                                )
+                        )
+                ))
                 .build();
 
         BearerToken bearerToken = new BearerToken("TOKEN_HERE");
@@ -57,12 +77,8 @@ public class Main {
                 }
 
             } catch (Exception e) {
-                if (e instanceof StatusRuntimeException sre && sre.getStatus().getCode().equals(Status.UNAVAILABLE.getCode()) && sre.getMessage().contains("stream timeout")) {
-                    // Stream got disconnected after inactivity. Retry
-                } else {
-                    System.out.println("Error calling watch: " + e.getMessage());
-                    return;
-                }
+                System.out.println("Error calling watch: " + e.getMessage());
+                return;
             }
         }
     }
